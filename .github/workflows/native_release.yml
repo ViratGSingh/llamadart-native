@@ -394,6 +394,13 @@ jobs:
         run: |
           OUT_DIR="bin/linux/${{ matrix.arch }}"
           test -f "$OUT_DIR/${{ matrix.backend_glob }}" || { echo "Missing $OUT_DIR/${{ matrix.backend_glob }}"; exit 1; }
+          for lib in "$OUT_DIR"/*.so; do
+            readelf -d "$lib" | grep -F 'Library runpath: [$ORIGIN]' >/dev/null || {
+              echo "Expected relocatable RUNPATH \$ORIGIN in $lib" >&2
+              readelf -d "$lib" | grep -F 'RUNPATH' >&2 || true
+              exit 1
+            }
+          done
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             CACHE_FILE="build/linux-arm64-full/CMakeCache.txt"
             test -f "$CACHE_FILE" || { echo "Missing CMake cache at $CACHE_FILE"; exit 1; }
@@ -443,7 +450,7 @@ jobs:
           github_token: ${{ github.token }}
       - name: Install build deps
         run: |
-          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ccache ninja-build pkg-config python3 python3-pip rocblas-dev hipblas-dev
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential binutils ccache ninja-build pkg-config python3 python3-pip rocblas-dev hipblas-dev
           python3 -m pip install --upgrade cmake
           cmake --version
       - name: Restore ccache
@@ -476,6 +483,13 @@ jobs:
         run: |
           OUT_DIR="bin/linux/x64"
           test -f "$OUT_DIR/libggml-hip.so" || { echo "Missing $OUT_DIR/libggml-hip.so"; exit 1; }
+          for lib in "$OUT_DIR"/*.so; do
+            readelf -d "$lib" | grep -F 'Library runpath: [$ORIGIN]' >/dev/null || {
+              echo "Expected relocatable RUNPATH \$ORIGIN in $lib" >&2
+              readelf -d "$lib" | grep -F 'RUNPATH' >&2 || true
+              exit 1
+            }
+          done
       - name: Stage upload payload
         run: |
           OUT_DIR="bin/linux/x64"
