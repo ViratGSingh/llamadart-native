@@ -51,6 +51,8 @@
       "hidden": true,
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_BUILD_WITH_INSTALL_RPATH": "ON",
+        "CMAKE_INSTALL_RPATH": "$ORIGIN",
         "CMAKE_SHARED_LINKER_FLAGS": "-s",
         "GGML_OPENMP": "ON"
       }
