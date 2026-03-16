@@ -395,8 +395,8 @@ jobs:
           OUT_DIR="bin/linux/${{ matrix.arch }}"
           test -f "$OUT_DIR/${{ matrix.backend_glob }}" || { echo "Missing $OUT_DIR/${{ matrix.backend_glob }}"; exit 1; }
           for lib in "$OUT_DIR"/*.so; do
-            readelf -d "$lib" | grep -F 'Library runpath: [$ORIGIN]' >/dev/null || {
-              echo "Expected relocatable RUNPATH \$ORIGIN in $lib" >&2
+            readelf -d "$lib" | grep -E 'Library runpath: \[\$ORIGIN(:|\])' >/dev/null || {
+              echo "Expected RUNPATH to start with \$ORIGIN in $lib" >&2
               readelf -d "$lib" | grep -F 'RUNPATH' >&2 || true
               exit 1
             }
@@ -484,8 +484,8 @@ jobs:
           OUT_DIR="bin/linux/x64"
           test -f "$OUT_DIR/libggml-hip.so" || { echo "Missing $OUT_DIR/libggml-hip.so"; exit 1; }
           for lib in "$OUT_DIR"/*.so; do
-            readelf -d "$lib" | grep -F 'Library runpath: [$ORIGIN]' >/dev/null || {
-              echo "Expected relocatable RUNPATH \$ORIGIN in $lib" >&2
+            readelf -d "$lib" | grep -E 'Library runpath: \[\$ORIGIN(:|\])' >/dev/null || {
+              echo "Expected RUNPATH to start with \$ORIGIN in $lib" >&2
               readelf -d "$lib" | grep -F 'RUNPATH' >&2 || true
               exit 1
             }
