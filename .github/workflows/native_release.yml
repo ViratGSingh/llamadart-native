@@ -21,6 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  ANDROID_NDK_VERSION: 28.2.13676358
   CMAKE_C_COMPILER_LAUNCHER: ccache
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
   CMAKE_CUDA_COMPILER_LAUNCHER: ccache
@@ -101,6 +102,16 @@ jobs:
           java-version: '17'
       - name: Setup Android SDK/NDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools ndk;${{ env.ANDROID_NDK_VERSION }}
+      - name: Select pinned Android NDK
+        run: |
+          set -euo pipefail
+          ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          NDK_DIR="$ANDROID_SDK_DIR/ndk/${ANDROID_NDK_VERSION}"
+          test -d "$NDK_DIR" || { echo "Missing $NDK_DIR" >&2; exit 1; }
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "Using pinned Android NDK: $NDK_DIR"
       - name: Install build deps
         run: sudo apt-get update && sudo apt-get install -y ninja-build ccache
       - name: Restore ccache
@@ -136,6 +147,58 @@ jobs:
 
           OUT_DIR="bin/android/${{ matrix.out_arch }}"
           test -f "$OUT_DIR/${{ matrix.backend_glob }}" || { echo "Missing $OUT_DIR/${{ matrix.backend_glob }}"; exit 1; }
+
+          READELF="$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -type f -name llvm-readelf | head -n 1)"
+          if [ -z "$READELF" ]; then
+            echo "Unable to locate llvm-readelf in ANDROID_NDK_HOME" >&2
+            exit 1
+          fi
+
+          python3 - "$READELF" "$OUT_DIR" <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          readelf = sys.argv[1]
+          out_dir = pathlib.Path(sys.argv[2])
+          libs = sorted(out_dir.glob("*.so"))
+          if not libs:
+              raise SystemExit(f"No shared libraries found under {out_dir}")
+
+          errors: list[str] = []
+          for lib in libs:
+              output = subprocess.check_output(
+                  [readelf, "-lW", str(lib)],
+                  text=True,
+              )
+              alignments: list[str] = []
+              for line in output.splitlines():
+                  stripped = line.strip()
+                  if not stripped.startswith("LOAD"):
+                      continue
+                  fields = stripped.split()
+                  try:
+                      alignment = int(fields[-1], 16)
+                  except (IndexError, ValueError):
+                      continue
+                  alignments.append(f"0x{alignment:x}")
+
+              if not alignments:
+                  errors.append(f"{lib.name}: no LOAD program headers found")
+                  continue
+
+              print(f"{lib.name}: LOAD alignments {', '.join(alignments)}")
+              if any(int(alignment, 16) < 0x4000 for alignment in alignments):
+                  errors.append(
+                      f"{lib.name}: expected all LOAD alignments >= 0x4000, got {', '.join(alignments)}"
+                  )
+
+          if errors:
+              for error in errors:
+                  print(error, file=sys.stderr)
+              raise SystemExit(1)
+          PY
+
           if [ "${{ matrix.android_abi }}" = "arm64-v8a" ]; then
             if [ "${{ matrix.include_core }}" = "true" ]; then
               expected_cpu_variants=(
