@@ -10,6 +10,7 @@ import subprocess
 from fnmatch import fnmatch
 from functools import lru_cache
 from pathlib import Path
+from typing import NoReturn
 REPO_ROOT = Path(__file__).resolve().parents[1]
 THIRD_PARTY_DIR = REPO_ROOT / "third_party"
 OPENCL_HEADERS_DIR = THIRD_PARTY_DIR / "OpenCL-Headers"
@@ -38,6 +39,8 @@ ANDROID_ABI_ALIASES = {
 
 ANDROID_OUT_ARCH = {"arm64-v8a": "arm64", "x86_64": "x64"}
 ANDROID_ARCH_PATH = {"arm64-v8a": "aarch64-linux-android", "x86_64": "x86_64-linux-android"}
+ANDROID_FLEXIBLE_PAGE_SIZES = "ON"
+ANDROID_FLEXIBLE_PAGE_SIZES_ARG = f"-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES={ANDROID_FLEXIBLE_PAGE_SIZES}"
 ANDROID_PRAGMA_WARN_SUPPRESS = "-Wno-#pragma-messages"
 ANDROID_OPENCL_LOADER_WARN_SUPPRESS = "-Wno-#pragma-messages -Wno-typedef-redefinition"
 WINDOWS_VCPKG_TRIPLETS = {"x64": "x64-windows", "arm64": "arm64-windows"}
@@ -80,7 +83,7 @@ WINDOWS_SYSTEM_DLLS = {
 }
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     raise SystemExit(message)
 
 
@@ -377,6 +380,7 @@ def build_android_opencl_loader(abi: str, ndk: Path, build_dir: Path, env: dict[
         f"-DCMAKE_TOOLCHAIN_FILE={toolchain_file}",
         f"-DANDROID_ABI={abi}",
         "-DANDROID_PLATFORM=android-28",
+        ANDROID_FLEXIBLE_PAGE_SIZES_ARG,
         "-DCMAKE_BUILD_TYPE=Release",
         f"-DCMAKE_C_FLAGS={ANDROID_OPENCL_LOADER_WARN_SUPPRESS}",
         "-DENABLE_OPENCL_LAYERS=OFF",
@@ -801,6 +805,7 @@ def build_android_abi(abi: str, args: argparse.Namespace, env: dict[str, str]) -
     extra_args = cmake_cache_args(cache_vars)
     extra_args.extend(
         [
+            ANDROID_FLEXIBLE_PAGE_SIZES_ARG,
             f"-DCMAKE_C_FLAGS={ANDROID_PRAGMA_WARN_SUPPRESS}",
             f"-DCMAKE_CXX_FLAGS={ANDROID_PRAGMA_WARN_SUPPRESS}",
         ]
