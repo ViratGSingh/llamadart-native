@@ -148,7 +148,7 @@ jobs:
           OUT_DIR="bin/android/${{ matrix.out_arch }}"
           test -f "$OUT_DIR/${{ matrix.backend_glob }}" || { echo "Missing $OUT_DIR/${{ matrix.backend_glob }}"; exit 1; }
 
-          READELF="$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -type f -name llvm-readelf | head -n 1)"
+          READELF="$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -name llvm-readelf -print -quit)"
           if [ -z "$READELF" ]; then
             echo "Unable to locate llvm-readelf in ANDROID_NDK_HOME" >&2
             exit 1
@@ -178,7 +178,7 @@ jobs:
             fi
             test -f "$CPU_LIB" || { echo "Missing $CPU_LIB"; exit 1; }
 
-            OBJDUMP="$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -type f -name llvm-objdump | head -n 1)"
+            OBJDUMP="$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -name llvm-objdump -print -quit)"
             if [ -z "$OBJDUMP" ]; then
               echo "Unable to locate llvm-objdump in ANDROID_NDK_HOME" >&2
               exit 1
