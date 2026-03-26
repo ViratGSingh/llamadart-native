@@ -4,7 +4,7 @@
 
 | Platform | Built backends |
 |---|---|
-| Android arm64 | Vulkan + OpenCL + Kleidi + CPU |
+| Android arm64 | Vulkan + OpenCL + CPU variants (Kleidi-enabled where safe) |
 | Android x64 | Vulkan + OpenCL + CPU |
 | iOS | Metal + CPU |
 | macOS | Metal + CPU |
@@ -18,7 +18,10 @@
 - Build one preset per platform/arch target.
 - Apple (iOS/macOS): consolidate Metal+CPU into a single `libllamadart`.
 - Apple defaults keep BLAS and Kleidi disabled for a simpler compatibility path.
-- Kleidi is enabled on Linux arm64, Android arm64, and Windows arm64 in this pipeline.
+- Kleidi is enabled on Linux arm64 and Windows arm64 in this pipeline.
+- Android arm64 keeps Kleidi on by building each CPU variant in its own
+  isolated configuration so higher-tier ISA flags do not leak into lower-tier
+  variant binaries.
 - Non-Apple: keep backends as separate dynamic libraries (`GGML_BACKEND_DL=ON`).
 
 ## Runtime Packaging Model
