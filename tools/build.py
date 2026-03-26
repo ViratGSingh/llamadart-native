@@ -43,6 +43,15 @@ ANDROID_FLEXIBLE_PAGE_SIZES = "ON"
 ANDROID_FLEXIBLE_PAGE_SIZES_ARG = f"-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES={ANDROID_FLEXIBLE_PAGE_SIZES}"
 ANDROID_PRAGMA_WARN_SUPPRESS = "-Wno-#pragma-messages"
 ANDROID_OPENCL_LOADER_WARN_SUPPRESS = "-Wno-#pragma-messages -Wno-typedef-redefinition"
+ANDROID_ARM64_CPU_VARIANTS = (
+    ("android_armv8.0_1", "armv8-a"),
+    ("android_armv8.2_1", "armv8.2-a+dotprod"),
+    ("android_armv8.2_2", "armv8.2-a+dotprod+fp16"),
+    ("android_armv8.6_1", "armv8.6-a+dotprod+fp16+i8mm"),
+    ("android_armv9.0_1", "armv8.6-a+dotprod+fp16+i8mm+sve2"),
+    ("android_armv9.2_1", "armv9.2-a+dotprod+fp16+sve+i8mm+sme"),
+    ("android_armv9.2_2", "armv9.2-a+dotprod+fp16+sve+i8mm+sve2+sme"),
+)
 WINDOWS_VCPKG_TRIPLETS = {"x64": "x64-windows", "arm64": "arm64-windows"}
 ANDROID_BACKENDS = ("full", "vulkan", "opencl")
 LINUX_BACKENDS = ("full", "vulkan", "cuda", "hip", "blas")
@@ -194,6 +203,27 @@ def configure_and_build(
     return resolve_build_dir_for_preset(preset)
 
 
+def configure_and_build_dir(
+    build_dir: Path,
+    *,
+    jobs: int | None,
+    cmake_args: list[str],
+    build_target: str | None = None,
+    env: dict[str, str] | None = None,
+) -> Path:
+    configure_cmd = ["cmake", "-S", str(REPO_ROOT), "-B", str(build_dir), "-G", "Ninja"]
+    configure_cmd.extend(cmake_args)
+    run(configure_cmd, env=env)
+
+    build_cmd = ["cmake", "--build", str(build_dir)]
+    if build_target:
+        build_cmd.extend(["--target", build_target])
+    if jobs and jobs > 0:
+        build_cmd.extend(["--parallel", str(jobs)])
+    run(build_cmd, env=env)
+    return build_dir
+
+
 def detect_linux_arch() -> str:
     machine = platform.machine().lower()
     if machine in ("x86_64", "amd64", "x64"):
@@ -238,7 +268,7 @@ def android_backend_cache_vars(abi: str, backend: str) -> dict[str, str]:
     cache_vars: dict[str, str] = {
         "GGML_VULKAN": "OFF",
         "GGML_OPENCL": "OFF",
-        "GGML_CPU_ALL_VARIANTS": "ON" if abi == "arm64-v8a" else "OFF",
+        "GGML_CPU_ALL_VARIANTS": "OFF",
         "GGML_CPU_KLEIDIAI": "ON" if abi == "arm64-v8a" else "OFF",
     }
 
@@ -248,6 +278,174 @@ def android_backend_cache_vars(abi: str, backend: str) -> dict[str, str]:
         cache_vars["GGML_OPENCL"] = "ON"
 
     return cache_vars
+
+
+def android_backend_enabled(backend: str, candidate: str) -> str:
+    return "ON" if backend in ("full", candidate) else "OFF"
+
+
+def android_base_cmake_args(abi: str, ndk: Path) -> list[str]:
+    return [
+        f"-DCMAKE_TOOLCHAIN_FILE={ndk / 'build/cmake/android.toolchain.cmake'}",
+        f"-DANDROID_ABI={abi}",
+        "-DANDROID_PLATFORM=android-28",
+        ANDROID_FLEXIBLE_PAGE_SIZES_ARG,
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=ON",
+        "-DGGML_BACKEND_DL=ON",
+        "-DGGML_NATIVE=OFF",
+        "-DCMAKE_SHARED_LINKER_FLAGS=-s",
+        "-DGGML_OPENMP=OFF",
+        "-DGGML_LLAMAFILE=OFF",
+        f"-DCMAKE_C_FLAGS={ANDROID_PRAGMA_WARN_SUPPRESS}",
+        f"-DCMAKE_CXX_FLAGS={ANDROID_PRAGMA_WARN_SUPPRESS}",
+    ]
+
+
+def android_configure_args(
+    abi: str,
+    *,
+    build_dir: Path,
+    ndk: Path,
+    env: dict[str, str],
+    cache_vars: dict[str, str],
+    jobs: int | None,
+) -> list[str]:
+    cmake_args = android_base_cmake_args(abi, ndk)
+    cmake_args.extend(cmake_cache_args(cache_vars))
+
+    if cache_vars["GGML_VULKAN"] == "ON":
+        ensure_submodule(
+            THIRD_PARTY_DIR / "Vulkan-Headers/include/vulkan/vulkan.h",
+            "Missing submodule: third_party/Vulkan-Headers. Run: git submodule update --init --recursive",
+        )
+        toolchain = build_dir / "android-host-toolchain.cmake"
+        write_android_host_toolchain(toolchain)
+        cmake_args.append(f"-DGGML_VULKAN_SHADERS_GEN_TOOLCHAIN={toolchain}")
+
+        glslc = find_file_with_suffix(ndk, "glslc") or find_file_with_suffix(ndk, "glslc.exe")
+        if glslc:
+            cmake_args.append(f"-DVulkan_GLSLC_EXECUTABLE={glslc}")
+
+        arch_path = ANDROID_ARCH_PATH[abi]
+        vulkan_lib = find_file_with_suffix(ndk, "libvulkan.so", contains=f"/{arch_path}/28/")
+        if not vulkan_lib:
+            vulkan_lib = find_file_with_suffix(ndk, "libvulkan.so", contains=f"/{arch_path}/")
+        if not vulkan_lib:
+            fail(f"Could not find libvulkan.so in NDK for ABI {abi}")
+
+        cmake_args.extend(
+            [
+                f"-DVulkan_LIBRARY={vulkan_lib}",
+                f"-DVulkan_INCLUDE_DIR={THIRD_PARTY_DIR / 'Vulkan-Headers/include'}",
+            ]
+        )
+
+    if cache_vars["GGML_OPENCL"] == "ON":
+        opencl_include, opencl_lib = resolve_android_opencl(abi, ndk, build_dir, env, jobs)
+        cmake_args.extend(
+            [
+                f"-DOpenCL_INCLUDE_DIR={opencl_include}",
+                f"-DOpenCL_LIBRARY={opencl_lib}",
+            ]
+        )
+
+    return cmake_args
+
+
+def build_android_arm64_cpu_variant(
+    variant_name: str,
+    arm_arch: str,
+    *,
+    build_dir: Path,
+    ndk: Path,
+    env: dict[str, str],
+    jobs: int | None,
+) -> Path:
+    cache_vars = {
+        "GGML_VULKAN": "OFF",
+        "GGML_OPENCL": "OFF",
+        "GGML_CPU_ALL_VARIANTS": "OFF",
+        "GGML_CPU_KLEIDIAI": "ON",
+        "GGML_CPU_ARM_ARCH": arm_arch,
+    }
+    cmake_args = android_configure_args(
+        "arm64-v8a",
+        build_dir=build_dir,
+        ndk=ndk,
+        env=env,
+        cache_vars=cache_vars,
+        jobs=jobs,
+    )
+    built_dir = configure_and_build_dir(
+        build_dir,
+        jobs=jobs,
+        cmake_args=cmake_args,
+        build_target="ggml-cpu",
+        env=env,
+    )
+    cpu_lib = built_dir / "bin/libggml-cpu.so"
+    if not cpu_lib.is_file():
+        fail(f"Missing rebuilt CPU variant for {variant_name}: {cpu_lib}")
+    return cpu_lib
+
+
+def build_android_arm64_abi(args: argparse.Namespace, env: dict[str, str]) -> None:
+    abi = "arm64-v8a"
+    backend = args.backend
+    ndk = Path(env["ANDROID_NDK_HOME"])
+
+    # Build Android arm64 CPU variants in isolated configurations so shared
+    # Kleidi source files do not inherit the highest ISA flags across the
+    # entire variant matrix in a single CMake configure.
+    primary_build_dir = BUILD_ROOT / f"android-{abi}-{backend}-primary"
+    if args.clean and primary_build_dir.exists():
+        shutil.rmtree(primary_build_dir)
+
+    primary_cache_vars = {
+        "GGML_VULKAN": android_backend_enabled(backend, "vulkan"),
+        "GGML_OPENCL": android_backend_enabled(backend, "opencl"),
+        "GGML_CPU_ALL_VARIANTS": "OFF",
+        "GGML_CPU_KLEIDIAI": "ON",
+        "GGML_CPU_ARM_ARCH": ANDROID_ARM64_CPU_VARIANTS[0][1],
+    }
+    primary_args = android_configure_args(
+        abi,
+        build_dir=primary_build_dir,
+        ndk=ndk,
+        env=env,
+        cache_vars=primary_cache_vars,
+        jobs=args.jobs,
+    )
+    built_dir = configure_and_build_dir(
+        primary_build_dir,
+        jobs=args.jobs,
+        cmake_args=primary_args,
+        env=env,
+    )
+
+    out_dir = BIN_DIR / f"android/{ANDROID_OUT_ARCH[abi]}"
+    copy_runtime_libraries(built_dir, out_dir)
+
+    baseline_cpu = out_dir / "libggml-cpu.so"
+    if not baseline_cpu.is_file():
+        fail(f"Missing baseline Android CPU backend after primary build: {baseline_cpu}")
+    copy_output(baseline_cpu, out_dir / f"libggml-cpu-{ANDROID_ARM64_CPU_VARIANTS[0][0]}.so")
+    baseline_cpu.unlink()
+
+    for variant_name, arm_arch in ANDROID_ARM64_CPU_VARIANTS[1:]:
+        variant_build_dir = BUILD_ROOT / f"android-{abi}-{backend}-{variant_name}"
+        if args.clean and variant_build_dir.exists():
+            shutil.rmtree(variant_build_dir)
+        cpu_lib = build_android_arm64_cpu_variant(
+            variant_name,
+            arm_arch,
+            build_dir=variant_build_dir,
+            ndk=ndk,
+            env=env,
+            jobs=args.jobs,
+        )
+        copy_output(cpu_lib, out_dir / f"libggml-cpu-{variant_name}.so")
 
 
 def windows_backend_cache_vars(arch: str, backend: str) -> dict[str, str]:
@@ -796,56 +994,24 @@ def write_android_host_toolchain(path: Path) -> None:
 
 
 def build_android_abi(abi: str, args: argparse.Namespace, env: dict[str, str]) -> None:
+    if abi == "arm64-v8a":
+        build_android_arm64_abi(args, env)
+        return
+
     preset = f"android-{abi}-full"
     build_dir = clean_build_dir(preset, args.clean)
     backend = args.backend
 
     ndk = Path(env["ANDROID_NDK_HOME"])
     cache_vars = android_backend_cache_vars(abi, backend)
-    extra_args = cmake_cache_args(cache_vars)
-    extra_args.extend(
-        [
-            ANDROID_FLEXIBLE_PAGE_SIZES_ARG,
-            f"-DCMAKE_C_FLAGS={ANDROID_PRAGMA_WARN_SUPPRESS}",
-            f"-DCMAKE_CXX_FLAGS={ANDROID_PRAGMA_WARN_SUPPRESS}",
-        ]
+    extra_args = android_configure_args(
+        abi,
+        build_dir=build_dir,
+        ndk=ndk,
+        env=env,
+        cache_vars=cache_vars,
+        jobs=args.jobs,
     )
-
-    if cache_vars["GGML_VULKAN"] == "ON":
-        ensure_submodule(
-            THIRD_PARTY_DIR / "Vulkan-Headers/include/vulkan/vulkan.h",
-            "Missing submodule: third_party/Vulkan-Headers. Run: git submodule update --init --recursive",
-        )
-        toolchain = build_dir / "android-host-toolchain.cmake"
-        write_android_host_toolchain(toolchain)
-        extra_args.append(f"-DGGML_VULKAN_SHADERS_GEN_TOOLCHAIN={toolchain}")
-
-        glslc = find_file_with_suffix(ndk, "glslc") or find_file_with_suffix(ndk, "glslc.exe")
-        if glslc:
-            extra_args.append(f"-DVulkan_GLSLC_EXECUTABLE={glslc}")
-
-        arch_path = ANDROID_ARCH_PATH[abi]
-        vulkan_lib = find_file_with_suffix(ndk, "libvulkan.so", contains=f"/{arch_path}/28/")
-        if not vulkan_lib:
-            vulkan_lib = find_file_with_suffix(ndk, "libvulkan.so", contains=f"/{arch_path}/")
-        if not vulkan_lib:
-            fail(f"Could not find libvulkan.so in NDK for ABI {abi}")
-
-        extra_args.extend(
-            [
-                f"-DVulkan_LIBRARY={vulkan_lib}",
-                f"-DVulkan_INCLUDE_DIR={THIRD_PARTY_DIR / 'Vulkan-Headers/include'}",
-            ]
-        )
-
-    if cache_vars["GGML_OPENCL"] == "ON":
-        opencl_include, opencl_lib = resolve_android_opencl(abi, ndk, build_dir, env, args.jobs)
-        extra_args.extend(
-            [
-                f"-DOpenCL_INCLUDE_DIR={opencl_include}",
-                f"-DOpenCL_LIBRARY={opencl_lib}",
-            ]
-        )
 
     built_dir = configure_and_build(preset, jobs=args.jobs, extra_cmake_args=extra_args, env=env)
     out_arch = ANDROID_OUT_ARCH[abi]
@@ -930,7 +1096,7 @@ def print_presets() -> None:
     presets = [
         "apple: target=macos-arm64|macos-x86_64|ios-device-arm64|ios-sim-arm64|ios-sim-x86_64 (consolidated: metal+cpu in one dylib)",
         "linux: arch=x64|arm64 backend=full|vulkan|cuda|hip|blas (x64 full=vulkan+cuda+blas+cpu, arm64 full=vulkan+blas+kleidi+cpu, hip=x64 only)",
-        "android: abi=arm64-v8a|x86_64|all backend=full|vulkan|opencl (arm64 full=vulkan+opencl+kleidi+cpu variants, x86_64 full=vulkan+opencl+cpu)",
+        "android: abi=arm64-v8a|x86_64|all backend=full|vulkan|opencl (arm64 builds isolated CPU variants so Kleidi stays enabled where safe; x86_64 full=vulkan+opencl+cpu)",
         "windows: arch=x64|arm64 backend=full|vulkan|cuda|blas (x64 full=vulkan+cuda+blas+cpu, arm64 full=vulkan+blas+kleidi+cpu)",
     ]
     for p in presets:

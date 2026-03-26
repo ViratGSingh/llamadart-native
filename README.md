@@ -29,7 +29,7 @@ The Dart API/runtime stays in the main `llamadart` repository.
 
 Each target builds all worthy backends together in one build:
 
-- Android: arm64 = Vulkan + OpenCL + Kleidi + CPU; x86_64 = Vulkan + OpenCL + CPU
+- Android: arm64 = Vulkan + OpenCL + CPU variants (Kleidi-enabled where safe); x86_64 = Vulkan + OpenCL + CPU
 - iOS/macOS: Metal + CPU (consolidated into `libllamadart`, BLAS/Kleidi disabled)
 - Linux x64: Vulkan + CUDA + BLAS + ZenDNN + CPU
 - Linux arm64: Vulkan + BLAS + Kleidi + CPU
@@ -81,7 +81,11 @@ Assets are suffixed with platform/arch, for example:
 
 ## Local Build (Preferred)
 
-Builds are driven by root `CMakePresets.json` via `tools/build.py`.
+Builds are primarily driven by root `CMakePresets.json` via `tools/build.py`.
+Android arm64 CPU variants use isolated CMake build directories so per-variant
+ISA flags remain correct while packaging the full variant matrix. The raw
+`android-arm64-v8a-full` preset now represents the primary arm64 build, while
+`tools/build.py` assembles the additional CPU variant outputs.
 
 Examples:
 
@@ -92,7 +96,7 @@ python3 tools/build.py apple --target macos-arm64
 # Linux x64 (Vulkan + CUDA + BLAS + ZenDNN + CPU)
 python3 tools/build.py linux --arch x64
 
-# Android both ABIs (arm64: Vulkan + OpenCL + Kleidi + CPU; x86_64: Vulkan + OpenCL + CPU)
+# Android both ABIs (arm64: Vulkan + OpenCL + CPU variants; x86_64: Vulkan + OpenCL + CPU)
 python3 tools/build.py android --abi all
 
 # Windows x64 (Vulkan + CUDA + BLAS + CPU)
@@ -141,6 +145,8 @@ Useful flags:
 
 Outputs are written to `bin/linux/x64` and `bin/linux/arm64`.
 Note: Kleidi-enabled lanes require network access to fetch upstream Kleidi sources.
+Android arm64 CPU variants are built in isolated configurations so Kleidi can
+stay enabled without leaking newer ISA flags into lower-tier variant binaries.
 
 Android OpenCL override env vars (optional):
 
