@@ -13,6 +13,31 @@ else()
     set(LLAMADART_CONSOLIDATE OFF CACHE BOOL "Consolidate llama.cpp + ggml into libllamadart on Apple")
 endif()
 
+set(LLAMADART_CPU_REQUIRED_FEATURES "" CACHE STRING
+    "Semicolon-separated GGML_USE_* defines for Android arm64 CPU backend scoring")
+
+function(llamadart_attach_android_cpu_backend_score target_name)
+    if (NOT ANDROID OR NOT TARGET ${target_name} OR NOT GGML_CPU_ARM_ARCH)
+        return()
+    endif()
+
+    set(score_target ${target_name}-llamadart-feats)
+    add_library(${score_target} OBJECT third_party/llama.cpp/ggml/src/ggml-cpu/arch/arm/cpu-feats.cpp)
+    target_include_directories(${score_target} PRIVATE
+        third_party/llama.cpp/ggml/src
+        third_party/llama.cpp/ggml/include
+    )
+    target_compile_definitions(${score_target} PRIVATE
+        GGML_BACKEND_DL
+        GGML_BACKEND_BUILD
+        GGML_BACKEND_SHARED
+        ${LLAMADART_CPU_REQUIRED_FEATURES}
+    )
+    set_target_properties(${score_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_options(${score_target} PRIVATE -fno-lto)
+    target_sources(${target_name} PRIVATE $<TARGET_OBJECTS:${score_target}>)
+endfunction()
+
 if (APPLE AND LLAMADART_CONSOLIDATE)
     # Consolidated Apple strategy: static deps + one shared wrapper dylib.
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
@@ -67,6 +92,7 @@ endif()
 
 add_subdirectory(third_party/llama.cpp/tools/mtmd EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/llama.cpp)
+llamadart_attach_android_cpu_backend_score(ggml-cpu)
 
 add_library(llamadart_lib SHARED "src/llama_dart_wrapper.cpp")
 
