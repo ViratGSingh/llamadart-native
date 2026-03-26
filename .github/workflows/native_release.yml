@@ -166,7 +166,8 @@ jobs:
             ARMV82_LIB="$OUT_DIR/libggml-cpu-android_armv8.2_2.so"
             test -f "$ARMV82_LIB" || { echo "Missing $ARMV82_LIB"; exit 1; }
             ARMV82_DISASM="$(mktemp)"
-            trap 'rm -f "${DISASM_FILE:-}" "${ARMV82_DISASM:-}"' EXIT
+            SCORE_SYMS_FILE="$(mktemp)"
+            trap 'rm -f "${DISASM_FILE:-}" "${ARMV82_DISASM:-}" "${SCORE_SYMS_FILE:-}"' EXIT
             "$OBJDUMP" -d --no-show-raw-insn "$ARMV82_LIB" > "$ARMV82_DISASM"
             if grep -Eq '\b(addvl|ptrue|cntw|rdvl|ld1b|st1b)\b' "$ARMV82_DISASM"; then
               echo "Found unexpected SVE instructions in $ARMV82_LIB" >&2
@@ -185,8 +186,9 @@ jobs:
               )
               for lib in "${expected_cpu_variants[@]}"; do
                 test -f "$OUT_DIR/$lib" || { echo "Missing $OUT_DIR/$lib"; exit 1; }
-                if ! "$READELF" -Ws "$OUT_DIR/$lib" | grep -Fq 'ggml_backend_score'; then
-                  "$READELF" -Ws "$OUT_DIR/$lib" | grep 'ggml_backend' || true
+                "$READELF" -Ws "$OUT_DIR/$lib" > "$SCORE_SYMS_FILE"
+                if ! grep -Fq 'ggml_backend_score' "$SCORE_SYMS_FILE"; then
+                  grep 'ggml_backend' "$SCORE_SYMS_FILE" || true
                   echo "Missing ggml_backend_score export in $OUT_DIR/$lib" >&2
                   exit 1
                 fi
