@@ -44,13 +44,51 @@ ANDROID_FLEXIBLE_PAGE_SIZES_ARG = f"-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES={ANDRO
 ANDROID_PRAGMA_WARN_SUPPRESS = "-Wno-#pragma-messages"
 ANDROID_OPENCL_LOADER_WARN_SUPPRESS = "-Wno-#pragma-messages -Wno-typedef-redefinition"
 ANDROID_ARM64_CPU_VARIANTS = (
-    ("android_armv8.0_1", "armv8-a"),
-    ("android_armv8.2_1", "armv8.2-a+dotprod"),
-    ("android_armv8.2_2", "armv8.2-a+dotprod+fp16"),
-    ("android_armv8.6_1", "armv8.6-a+dotprod+fp16+i8mm"),
-    ("android_armv9.0_1", "armv8.6-a+dotprod+fp16+i8mm+sve2"),
-    ("android_armv9.2_1", "armv9.2-a+dotprod+fp16+sve+i8mm+sme"),
-    ("android_armv9.2_2", "armv9.2-a+dotprod+fp16+sve+i8mm+sve2+sme"),
+    ("android_armv8.0_1", "armv8-a", ()),
+    ("android_armv8.2_1", "armv8.2-a+dotprod", ("GGML_USE_DOTPROD",)),
+    (
+        "android_armv8.2_2",
+        "armv8.2-a+dotprod+fp16",
+        ("GGML_USE_DOTPROD", "GGML_USE_FP16_VECTOR_ARITHMETIC"),
+    ),
+    (
+        "android_armv8.6_1",
+        "armv8.6-a+dotprod+fp16+i8mm",
+        ("GGML_USE_DOTPROD", "GGML_USE_FP16_VECTOR_ARITHMETIC", "GGML_USE_MATMUL_INT8"),
+    ),
+    (
+        "android_armv9.0_1",
+        "armv8.6-a+dotprod+fp16+i8mm+sve2",
+        (
+            "GGML_USE_DOTPROD",
+            "GGML_USE_FP16_VECTOR_ARITHMETIC",
+            "GGML_USE_MATMUL_INT8",
+            "GGML_USE_SVE2",
+        ),
+    ),
+    (
+        "android_armv9.2_1",
+        "armv9.2-a+dotprod+fp16+sve+i8mm+sme",
+        (
+            "GGML_USE_DOTPROD",
+            "GGML_USE_FP16_VECTOR_ARITHMETIC",
+            "GGML_USE_SVE",
+            "GGML_USE_MATMUL_INT8",
+            "GGML_USE_SME",
+        ),
+    ),
+    (
+        "android_armv9.2_2",
+        "armv9.2-a+dotprod+fp16+sve+i8mm+sve2+sme",
+        (
+            "GGML_USE_DOTPROD",
+            "GGML_USE_FP16_VECTOR_ARITHMETIC",
+            "GGML_USE_SVE",
+            "GGML_USE_MATMUL_INT8",
+            "GGML_USE_SVE2",
+            "GGML_USE_SME",
+        ),
+    ),
 )
 WINDOWS_VCPKG_TRIPLETS = {"x64": "x64-windows", "arm64": "arm64-windows"}
 ANDROID_BACKENDS = ("full", "vulkan", "opencl")
@@ -356,6 +394,7 @@ def android_configure_args(
 def build_android_arm64_cpu_variant(
     variant_name: str,
     arm_arch: str,
+    required_features: tuple[str, ...],
     *,
     build_dir: Path,
     ndk: Path,
@@ -368,6 +407,7 @@ def build_android_arm64_cpu_variant(
         "GGML_CPU_ALL_VARIANTS": "OFF",
         "GGML_CPU_KLEIDIAI": "ON",
         "GGML_CPU_ARM_ARCH": arm_arch,
+        "LLAMADART_CPU_REQUIRED_FEATURES": ";".join(required_features),
     }
     cmake_args = android_configure_args(
         "arm64-v8a",
@@ -408,6 +448,7 @@ def build_android_arm64_abi(args: argparse.Namespace, env: dict[str, str]) -> No
         "GGML_CPU_ALL_VARIANTS": "OFF",
         "GGML_CPU_KLEIDIAI": "ON",
         "GGML_CPU_ARM_ARCH": ANDROID_ARM64_CPU_VARIANTS[0][1],
+        "LLAMADART_CPU_REQUIRED_FEATURES": ";".join(ANDROID_ARM64_CPU_VARIANTS[0][2]),
     }
     primary_args = android_configure_args(
         abi,
@@ -433,13 +474,14 @@ def build_android_arm64_abi(args: argparse.Namespace, env: dict[str, str]) -> No
     copy_output(baseline_cpu, out_dir / f"libggml-cpu-{ANDROID_ARM64_CPU_VARIANTS[0][0]}.so")
     baseline_cpu.unlink()
 
-    for variant_name, arm_arch in ANDROID_ARM64_CPU_VARIANTS[1:]:
+    for variant_name, arm_arch, required_features in ANDROID_ARM64_CPU_VARIANTS[1:]:
         variant_build_dir = BUILD_ROOT / f"android-{abi}-{backend}-{variant_name}"
         if args.clean and variant_build_dir.exists():
             shutil.rmtree(variant_build_dir)
         cpu_lib = build_android_arm64_cpu_variant(
             variant_name,
             arm_arch,
+            required_features,
             build_dir=variant_build_dir,
             ndk=ndk,
             env=env,

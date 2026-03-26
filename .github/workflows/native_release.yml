@@ -185,6 +185,10 @@ jobs:
               )
               for lib in "${expected_cpu_variants[@]}"; do
                 test -f "$OUT_DIR/$lib" || { echo "Missing $OUT_DIR/$lib"; exit 1; }
+                "$READELF" -Ws "$OUT_DIR/$lib" | grep -q ' ggml_backend_score$' || {
+                  echo "Missing ggml_backend_score export in $OUT_DIR/$lib" >&2
+                  exit 1
+                }
               done
             fi
 
