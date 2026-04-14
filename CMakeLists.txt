@@ -94,7 +94,10 @@ add_subdirectory(third_party/llama.cpp/tools/mtmd EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/llama.cpp)
 llamadart_attach_android_cpu_backend_score(ggml-cpu)
 
-add_library(llamadart_lib SHARED "src/llama_dart_wrapper.cpp")
+add_library(llamadart_lib SHARED
+    "src/llama_dart_wrapper.cpp"
+    "src/pea_adapter.cpp"
+)
 
 if (MINGW)
     target_link_options(llamadart_lib PRIVATE -Wl,--export-all-symbols)
